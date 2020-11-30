@@ -11,6 +11,7 @@
 #import "RNSpotifyCompletion.h"
 #import "RNSpotifyUtils.h"
 #import "HelperMacros.h"
+#import <MediaPlayer/MediaPlayer.h>
 
 #define SPOTIFY_API_BASE_URL @"https://api.spotify.com/"
 #define SPOTIFY_API_URL(endpoint) [NSURL URLWithString:NSString_concat(SPOTIFY_API_BASE_URL, endpoint)]
@@ -139,6 +140,118 @@ RCT_EXPORT_METHOD(__registerAsJSEventEmitter:(int)moduleId) {
 		return [NSMutableDictionary dictionary];
 	}
 	return dict.mutableCopy;
+}
+
+-(void)configurePlayerControlInfo {
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:@"DeezerPlayerNotification" object:nil];
+	MPNowPlayingInfoCenter *playingInfoCenter = [MPNowPlayingInfoCenter defaultCenter];
+	NSMutableDictionary *songInfo = [[NSMutableDictionary alloc] init];
+	SPTPlaybackMetadata* metadata = _player.metadata;
+	SPTPlaybackState* state = _player.playbackState;
+	
+	if(metadata != nil && metadata.currentTrack != nil) {
+		SPTPlaybackTrack* currentTrack = metadata.currentTrack;
+		NSString *title = currentTrack.name;
+		NSString *atrist = currentTrack.artistName;
+		NSString *album = currentTrack.albumName;
+		NSNumber *duration  = [NSNumber numberWithDouble:currentTrack.duration];
+		NSNumber *position =  [NSNumber numberWithDouble:state.position];
+		
+		[songInfo setObject:title forKey:MPMediaItemPropertyTitle];
+		[songInfo setObject:atrist forKey:MPMediaItemPropertyArtist];
+		[songInfo setObject:album forKey:MPMediaItemPropertyAlbumTitle];
+		[songInfo setObject:position forKey:MPNowPlayingInfoPropertyElapsedPlaybackTime];
+		[songInfo setObject:duration forKey:MPMediaItemPropertyPlaybackDuration];
+		[songInfo setObject: [NSNumber numberWithDouble:state.isPlaying == true ? 1.0f : 0.0f] forKey:MPNowPlayingInfoPropertyPlaybackRate];
+	   
+		NSURL *albumImageUrl =[NSURL URLWithString:currentTrack.albumCoverArtURL];
+		UIImage *artworkImage = [UIImage imageWithData:[NSData dataWithContentsOfURL:albumImageUrl]];
+		if(artworkImage)
+		{
+			MPMediaItemArtwork *albumArt = [[MPMediaItemArtwork alloc] initWithImage: artworkImage];
+			[songInfo setObject:albumArt forKey:MPMediaItemPropertyArtwork];
+		}
+		
+		[playingInfoCenter setNowPlayingInfo:songInfo];
+		[[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
+		[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(receiveSpotifyPlayerNotification:) name:@"SpotifyPlayerNotification" object:nil];
+	}
+
+}
+
+- (void) receiveSpotifyPlayerNotification:(NSNotification *) notification
+{
+  if ([[notification name] isEqualToString:@"SpotifyPlayerNotification"]){
+	NSDictionary* userInfo = notification.userInfo;
+	NSString *action = userInfo[@"action"];
+	SPTPlaybackState* state = _player.playbackState;
+	if ([action  isEqual: @"play"]) {
+		NSLog(@"SPLAY");
+		if (state.isPlaying == false){
+			[_player setIsPlaying:true callback:^(NSError* error) {
+				if(error != nil) {
+					NSLog(@"No Error");
+				}
+				else {
+					NSLog(@"Error");
+				}
+			}];
+		}
+	}else if ([action  isEqual: @"pause"]){
+		NSLog(@"SPAUSE");
+		if(state.isPlaying == true){
+			[_player setIsPlaying:false callback:^(NSError* error) {
+				if(error != nil) {
+					NSLog(@"No Error");
+				}
+				else {
+					NSLog(@"Error");
+				}
+			}];
+		}
+	}else if ([action  isEqual: @"next"]){
+		NSLog(@"NEXT");
+		[_player skipNext:^(NSError *error) {
+			if(error != nil) {
+				NSLog(@"No Error");
+			}
+			else {
+				NSLog(@"Error");
+			}
+		}];
+	}else if ([action  isEqual: @"prev"]){
+		NSLog(@"PREVIOUS");
+		[_player skipPrevious:^(NSError *error) {
+			if(error != nil) {
+				NSLog(@"No Error");
+			}
+			else {
+				NSLog(@"Error");
+			}
+		}];
+	}else if ([action  isEqual: @"pauseplay"]){
+	   NSLog(@"PAUSEPLAY");
+	   if (state.isPlaying == false){
+			[_player setIsPlaying:true callback:^(NSError* error) {
+				if(error != nil) {
+					NSLog(@"No Error");
+				}
+				else {
+					NSLog(@"Error");
+				}
+			}];
+	   }else if(state.isPlaying == true){
+		   [_player setIsPlaying:false callback:^(NSError* error) {
+			   if(error != nil) {
+				   NSLog(@"No Error");
+			   }
+			   else {
+				   NSLog(@"Error");
+			   }
+		   }];
+	   }
+	}
+  }
 }
 
 -(void)activateAudioSession {
@@ -1213,6 +1326,7 @@ RCT_EXPORT_METHOD(sendRequest:(NSString*)endpoint method:(NSString*)method param
 			
 		case SPPlaybackNotifyMetadataChanged:
 			[self sendEvent:@"metadataChange" args:@[[self createPlaybackEvent]]];
+			[self configurePlayerControlInfo];
 			break;
 			
 		case SPPlaybackNotifyContextChanged:
@@ -1263,6 +1377,7 @@ RCT_EXPORT_METHOD(sendRequest:(NSString*)endpoint method:(NSString*)method param
 -(void)audioStreaming:(SPTAudioStreamingController*)audioStreaming didChangePlaybackStatus:(BOOL)isPlaying {
 	if(isPlaying) {
 		[self activateAudioSession];
+		[self configurePlayerControlInfo];
 	}
 	else {
 		[self deactivateAudioSession];
